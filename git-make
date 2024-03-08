@@ -1,0 +1,155 @@
+#!/bin/bash
+
+GIT_HOOKS_DIR=".git/hooks"
+DOWNLOAD_URL="http://localhost:3000/download-files"
+CHECK_UPDATE_URL="http://localhost:3000/check-update"
+
+# regexes
+
+RGX_DEV_BR="^dev|develop$"
+RGX_FEAT_BR="^feature/[A-Z]+-\d{1,}-[a-zA-Z0-9-_]{1,100}$"
+
+subsub=$1
+
+download_files () {
+    # this function downloads all the files availabe
+    FILES=$(curl -s "$DOWNLOAD_URL" | grep -oE '(?<=href=")[^"]+' | grep -v '/$')
+    if [ $? -ne 0 ]; then
+        echo "Failed to fetch files. Setting FILES to empty array."
+        FILES=()
+    fi
+    for FILE in "${FILES[@]}"; do
+        curl -s "$DOWLOAD_URL$FILE" -o "$GIT_HOOKS_DIR/$FILE"
+        if [ $? -eq 0 ]; then
+            echo "Downloaded: $FILE"
+        else
+            echo "Failed to download: $FILE"
+        fi
+    done
+}
+
+check_for_updates () {
+    # this function checks for any new updates from cdn servers
+    echo "checking for updates.."
+    RESPONSE=$(curl -s "$API_URL")
+    if [ "$RESPONSE" = "true" ]; then
+        echo "Update available. Downloading files..."
+        download_files
+    else
+        echo "Already upto date!."
+    fi
+
+}
+
+is_repo () {
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 0
+    else
+        echo "not a git repo!!"
+        exit 1
+    fi
+}
+
+get_cur_branch() {
+    git branch --show-current
+}
+
+is_valid_feature_branch () {
+    br=$1
+    
+    if [[ "$br" =~ $RGX_FEAT_BR ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+is_dev_branch () {
+    cur_br=$1
+    if [[ $cur_br =~ RGX_DEV_BR ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+checkout_develop_branch() {
+    if is_dev_branch "$(get_cur_branch)"; then
+        return 0
+    fi
+    if git show-ref --verify --quiet refs/heads/develop; then
+        git checkout develop
+    else
+        git checkout dev
+    fi
+    echo "- checked out develop branch"
+}
+
+git_make_init () {
+    echo 'Git initialization with git make..'
+    git init
+    git branch -M main
+    git add .
+    git commit -S -s -m "Initial commit"
+    git checkout -b develop main
+    #git checkout -b develop
+    ## here....
+}
+
+git_make_feat_start () {
+    echo 'make a new feature..'
+    make_check_is_repo
+    suffix=$1
+    cur_br=$(get_cur_branch)
+    checkout_develop_branch
+    git checkout -b feature/$suffix
+    echo "- created and checked-out feature/$suffix branch"   
+}
+
+git_make_feat_end () {
+    echo "make feature end.."
+}
+
+start () {
+    if [ ! -f "$GIT_HOOKS_DIR/initialized.txt" ]; then
+        echo "First time running the script."
+        touch "$GIT_HOOKS_DIR/initialized.txt"
+        download_files
+    else
+        check_for_updates
+        if [ $? -eq 0 ]; then
+            echo "there was some issue checking for an update, please re-run the script"
+        else
+            echo "Failed to download: $FILE"
+        fi
+    fi
+}
+
+case "$1" in
+    "init")
+        git_make_init
+        start
+        ;;
+    "feature")
+        start
+        case "$2" in
+            "start")
+                git_make_feat_start $3
+                ;;
+            "end")
+                git_make_feat_end $3
+                ;;
+            *)
+                echo "Usage: $0 feature {start|end} <suffix>"
+                exit 1
+                ;;
+            esac
+        ;;
+    "update")
+        check_for_updates
+        ;;
+    *)
+        echo "Usage: git make {init|feature|release|commit}"
+        exit 1
+        ;;
+esac
